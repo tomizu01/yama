@@ -6,6 +6,7 @@ import random
 import pygame
 
 from game import config as C
+from game import display as D
 from game import stages as S
 from game.assets import Assets
 from game.menu import run_setup
@@ -175,7 +176,7 @@ def _wait_click_or_quit(
                 elif event.key == pygame.K_DOWN:
                     speed_source.adjust(-C.DEBUG_SPEED_STEP)
         draw_fn(screen)
-        pygame.display.flip()
+        D.present()
 
 
 def _draw_stage_start(
@@ -273,12 +274,12 @@ def _run_stage_clear(
         dt = clock.tick(C.FPS) / 1000.0
         speed_source.update(dt)
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = D.mouse_pos()
         rects = _draw_stage_clear(
             screen, fonts, stage, race.elapsed_s, race.real_distance_m,
             bg, is_final, saved_msg, mouse_pos,
         )
-        pygame.display.flip()
+        D.present()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -286,13 +287,14 @@ def _run_stage_clear(
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if rects["gpx"].collidepoint(event.pos):
+                click_pos = D.to_logical(event.pos)
+                if rects["gpx"].collidepoint(click_pos):
                     try:
                         path = recorder.write_gpx(default_activities_dir())
                         saved_msg = f"保存しました: {os.path.basename(path)}"
                     except Exception as e:
                         saved_msg = f"保存失敗: {e}"
-                elif rects["next"].collidepoint(event.pos):
+                elif rects["next"].collidepoint(click_pos):
                     return True
             if event.type == pygame.KEYDOWN and isinstance(speed_source, ConstantSpeedSource):
                 if event.key == pygame.K_UP:
@@ -303,11 +305,10 @@ def _run_stage_clear(
 
 def run() -> None:
     pygame.init()
-    # SCALED で論理解像度を固定し、RESIZABLE でユーザーがウィンドウを伸縮可能に。
-    # pygame が自動スケーリングするので描画コードもマウス座標も論理座標のままでよい
-    screen = pygame.display.set_mode(
-        (C.SCREEN_W, C.SCREEN_H), pygame.SCALED | pygame.RESIZABLE
-    )
+    # 論理 1504×1034 → ウィンドウへ自前で scale-blit。RESIZABLE で自由リサイズ。
+    # 描画コードもマウス座標も論理座標で完結する（display モジュール参照）
+    D.init()
+    screen = D.surface()
     pygame.display.set_caption("路線Rider")
     clock = pygame.time.Clock()
 
@@ -353,10 +354,10 @@ def run() -> None:
                             elif event.key == pygame.K_DOWN:
                                 speed_source.adjust(-C.DEBUG_SPEED_STEP)
 
-                mouse_x, _ = pygame.mouse.get_pos()
+                mouse_x, _ = D.mouse_pos()
                 race.update(dt, mouse_x)
                 race.draw(screen)
-                pygame.display.flip()
+                D.present()
 
                 if race.cleared:
                     stage_finished = True

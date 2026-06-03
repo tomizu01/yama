@@ -45,6 +45,7 @@ game/
   race.py               Race クラス（update/draw 分離）+ ステージ進行ループ run()
   stages.py             駅CSV読込 / Station・Stage / 距離概算 / ノルマ計算
   recorder.py           GPXトラック記録（線形補完で lat/lon を5秒おきに）
+  display.py            ウィンドウサイズ可変化（論理1504×1034 → 自前で smoothscale-blit）
   ble/
     constants.py        BLE UUID 定数（CSC/CPS/FE-C）
     parser.py           CSC/CPS Measurement のパース + speed/cadence 算出（ロールオーバー処理込み）

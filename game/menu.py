@@ -17,6 +17,7 @@ from typing import Callable
 import pygame
 
 from game import config as C
+from game import display as D
 from game.ble import BleBridge, BridgeEvent, DeviceCandidate, DeviceProfile
 from game.speed_source import (
     BleSpeedSource,
@@ -206,7 +207,7 @@ def run_setup(
                     state = _S_TITLE
 
         # --- 入力 ---
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = D.mouse_pos()
         click_consumed = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -253,7 +254,7 @@ def run_setup(
         else:
             rects = []
 
-        pygame.display.flip()
+        D.present()
 
         # --- クリック判定（描画後、レイアウトが固まってから） ---
         if click_consumed and rects:
