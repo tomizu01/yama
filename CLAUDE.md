@@ -14,8 +14,12 @@
 .venv\Scripts\python.exe main.py
 ```
 
-- 起動するとセットアップ画面が出る:「BLEデバイスを検索」または「デモ走行(30km/h固定)」
+- 起動するとセットアップ画面:「BLEデバイスを検索」または「デモ走行(30km/h固定)」
+- ステージ開始画面→レース→クリア画面 を30駅分ループ。最終駅のクリア画面で終了
 - 操作: マウスX座標で左右移動のみ（ポインタが自機より左なら左へ、右なら右へ）
+- 各画面の遷移はマウスクリック。クリア画面で「GPXを記録する」ボタンを押すと
+  `activities/YYYYMMDD_hhmmss.gpx` に Strava 等にアップ可能なログを保存
+- ウィンドウは角ドラッグで自由にリサイズ可（中身は論理1504×1034を smoothscale）
 - 開発用キー: `↑`/`↓` 巡航速度調整（デモ走行時のみ有効）、`ESC` 終了
 
 ## 進捗状況
@@ -28,7 +32,14 @@
 - [ ] **フェーズ4: ブラッシュアップ** — 未着手。勾配を BleSpeedSource に流し込む、
   FE-C 送信（トレーナーへの負荷制御）等
 
-BLE実機は自宅にある（仕様書は docs/ に格納済み）。
+### フェーズ3完了後の追加機能（2026-06-03）
+
+- [x] GPX走行ログ記録（`game/recorder.py`）。5秒おき＋進捗チェック、
+  クリア画面の「GPXを記録する」ボタンで `activities/` に出力（`<type>VirtualRide</type>`）
+- [x] ウィンドウサイズ可変化（`game/display.py`）。論理1504×1034 → 自前 smoothscale
+
+実機検証済み（CSC: CYCPLUS C3 / CPS: Think Rider、いずれもケイデンスモードで動作確認）。
+本格運用は 2026-06-04 のトレーニングで予定。
 
 ## コード構成
 
@@ -53,7 +64,7 @@ game/
 tools/
   measure_bg.py         bg.png の道路形状測定（開発用）
   screenshot_test.py    ヘッドレスで数秒シミュレートしてスクショ保存（描画検証用）
-  perf_test.py          フレーム時間計測（現状 1.5ms/frame、60fps余裕）
+  perf_test.py          フレーム時間計測（Race の update+draw のみ、display抜き）
 docs/
   YamanoteDaibouken.md  企画書
   ble-csc-profile.md    BLE: Cycling Speed and Cadence 仕様
