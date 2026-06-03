@@ -70,7 +70,7 @@ class Race:
             self.recorder.tick(dt, self.stage, progress)
 
         # 左右移動
-        self.player.update(dt, mouse_x)
+        self.player.update(dt, mouse_x, pedaling=self.effective_kmh > 0.1)
 
         # 障害物の更新と衝突
         hits = self.field.update(d_prev, self.distance_m, self.player.u)

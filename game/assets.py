@@ -13,11 +13,14 @@ class Assets:
     def __init__(self) -> None:
         self.bg = pygame.image.load(os.path.join(IMAGE_DIR, "bg.png")).convert()
         self.wara = pygame.image.load(os.path.join(IMAGE_DIR, "wara.png")).convert_alpha()
-        chari = pygame.image.load(os.path.join(IMAGE_DIR, "chari.png")).convert_alpha()
-
+        # 漕ぎアニメ用の2コマ（chari.png / chari2.png）
         w = C.PLAYER_SPRITE_W
-        h = round(chari.get_height() * w / chari.get_width())
-        self.chari = pygame.transform.scale(chari, (w, h))
+        self.chari_frames: list[pygame.Surface] = []
+        for name in ("chari.png", "chari2.png"):
+            img = pygame.image.load(os.path.join(IMAGE_DIR, name)).convert_alpha()
+            h = round(img.get_height() * w / img.get_width())
+            self.chari_frames.append(pygame.transform.scale(img, (w, h)))
+        self.chari = self.chari_frames[0]
 
         self.hud_font = pygame.font.SysFont("consolas", 36, bold=True)
         self.big_font = pygame.font.SysFont("consolas", 80, bold=True)

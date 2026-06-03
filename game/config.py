@@ -21,6 +21,7 @@ WARA_FRONT_W = int(ROAD_HALF_W * 2 / 4 * WARA_SCALE)
 
 # プレイヤーの描画サイズ（chari.png は 128x128）
 PLAYER_SPRITE_W = 300
+PLAYER_ANIM_INTERVAL_S = 1 / 3   # 漕ぎアニメ（chari/chari2）の切替間隔 [s]
 
 # --- 遠近投影 ---
 Z_NEAR = 12.0                # 投影定数 [m]。小さいほど手前で急拡大する
