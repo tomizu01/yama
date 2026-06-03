@@ -303,7 +303,11 @@ def _run_stage_clear(
 
 def run() -> None:
     pygame.init()
-    screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H), pygame.SCALED)
+    # SCALED で論理解像度を固定し、RESIZABLE でユーザーがウィンドウを伸縮可能に。
+    # pygame が自動スケーリングするので描画コードもマウス座標も論理座標のままでよい
+    screen = pygame.display.set_mode(
+        (C.SCREEN_W, C.SCREEN_H), pygame.SCALED | pygame.RESIZABLE
+    )
     pygame.display.set_caption("路線Rider")
     clock = pygame.time.Clock()
 
