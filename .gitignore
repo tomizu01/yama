@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 仮想環境
+.venv/
+
+# 開発ツールの生成物（スクリーンショット）
+tools/shots/
+
+# Claude Code ローカル設定
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+.DS_Store
