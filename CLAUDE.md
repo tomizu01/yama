@@ -32,14 +32,27 @@
 - [ ] **フェーズ4: ブラッシュアップ** — 未着手。勾配を BleSpeedSource に流し込む、
   FE-C 送信（トレーナーへの負荷制御）等
 
-### フェーズ3完了後の追加機能（2026-06-03）
+### フェーズ3完了後の追加機能
 
 - [x] GPX走行ログ記録（`game/recorder.py`）。5秒おき＋進捗チェック、
   クリア画面の「GPXを記録する」ボタンで `activities/` に出力（`<type>VirtualRide</type>`）
 - [x] ウィンドウサイズ可変化（`game/display.py`）。論理1504×1034 → 自前 smoothscale
+- [x] 漕ぎアニメ（2026-06-04）。chari.png / chari2.png を1/3秒毎に切替
+  （`PLAYER_ANIM_INTERVAL_S`）。実質速度 ≤ 0.1km/h で静止コマに戻る
+- [x] BLE自動再接続（2026-06-04）。詳細は「フェーズ2 BLE実装メモ」参照
 
-実機検証済み（CSC: CYCPLUS C3 / CPS: Think Rider、いずれもケイデンスモードで動作確認）。
-本格運用は 2026-06-04 のトレーニングで予定。
+### 実走検証（2026-06-04 完了）
+
+山手線一周（30ステージ）を実機トレーナーで完走し、全要素を検証済み:
+
+- **BLE**: 安定動作（自動再接続実装後）
+- **ゲームバランス**: 「藁をちゃんとよけないとノルマに届かない」狙い通りの難易度と
+  ユーザー評価。バランス定数（ノルマ25km/h・衝突ペナルティ等）は完成状態 →
+  **安易に変えないこと**
+- **漕ぎアニメ**: レトロゲーム風として上出来との評価
+- **GPX**: Strava にアップ成功。セグメント重複も無く問題なし
+
+（センサー: CSC: CYCPLUS C3 / CPS: Think Rider、ケイデンスモードで動作確認）
 
 ## コード構成
 
@@ -51,7 +64,7 @@ game/
   assets.py             画像読込 + 藁のスケールキャッシュ
   speed_source.py       SpeedSource 抽象 / ConstantSpeedSource(デモ) / BleSpeedSource(3モード+慣性)
   menu.py               起動時セットアップ画面（スキャン→デバイス選択→モード選択）
-  player.py             自転車（左右移動・描画）
+  player.py             自転車（左右移動・漕ぎアニメ・描画）
   obstacles.py          藁の生成・遠近描画・衝突判定
   race.py               Race クラス（update/draw 分離）+ ステージ進行ループ run()
   stages.py             駅CSV読込 / Station・Stage / 距離概算 / ノルマ計算
@@ -73,7 +86,7 @@ docs/
 lines/
   yamanote.csv          山手線駅: 駅名,緯度,経度（末尾に東京駅を再掲し周回を閉じる）
 activities/             走行ログ（GPX）の出力先。gitignore（ユーザー生成物）
-sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
+sozai/images/           bg.png(1504x1034) / chari.png・chari2.png(128x128, 漕ぎアニメ2コマ) / wara.png(96x96)
 ```
 
 ## 重要な設計事項・実測値
@@ -108,6 +121,12 @@ sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
 - **慣性シミュレーション**: `speed += (saturation - speed) * (1 - exp(-dt / τ))`、τ=4s
   （aicyc の 5Hz×0.05 と等価。`_INERTIA_TAU_S` で調整可能）
 - **停止検出**: 3秒間テレメトリ無し → センサー値を0に落として飽和速度0へ
+- **自動再接続（2026-06-04）**: 確立済み接続が不意に切れたら bridge が同アドレスへ
+  無限リトライ（3秒間隔）。意図的切断（disconnect/close/別デバイスへの connect）では
+  リトライしない（`_reconnect_address` / `_expect_disconnect` フラグで区別）。
+  保険として `BleSpeedSource` に20秒テレメトリ途絶ウォッチドッグ（切断 callback が
+  来ないまま接続が死ぬケース → `bridge.request_reconnect()` で強制再接続）。
+  切断〜復帰までレースHUDに「BLE RECONNECT...」を点滅表示
 - **勾配 (gradient)**: フェーズ2では常に0で計算。フェーズ3でステージから流し込む
 - **デバイス選択**: スキャン後、ユーザーが pygame メニューでクリック選択 → モード選択
   - スキャン段階では UUID フィルタしない。多くの CSC センサー（CYCPLUS C3 等）は

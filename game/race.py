@@ -107,6 +107,10 @@ class Race:
         if pw is not None:
             lines.append((f"POWER {pw:5.0f} W", (255, 255, 255)))
         lines.append((f"MODE  {self.speed_source.mode_label}", (200, 200, 200)))
+        if self.speed_source.status_text:
+            # BLE 切断中など。点滅させて気付きやすくする
+            if int(self.elapsed_s * 2) % 2 == 0:
+                lines.append((f"BLE   {self.speed_source.status_text}", (255, 90, 90)))
 
         for i, (text, color) in enumerate(lines):
             y = 16 + i * 44

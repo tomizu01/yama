@@ -58,6 +58,7 @@ class BridgeEvent:
       "connected"    payload: dict — {profile, features (wheel/crank/power)}
       "telemetry"    payload: Telemetry
       "disconnected" payload: None
+      "reconnecting" payload: str (address) — 自動再接続の試行開始
       "error"        payload: str
     """
     kind: str
@@ -68,7 +69,11 @@ class BridgeEvent:
 _CMD_SCAN = "scan"
 _CMD_CONNECT = "connect"
 _CMD_DISCONNECT = "disconnect"
+_CMD_RECONNECT = "reconnect"
 _CMD_STOP = "stop"
+
+# 自動再接続のリトライ間隔 [s]。デバイスが復帰するまで無限に繰り返す
+_RECONNECT_RETRY_S = 3.0
 
 
 @dataclass
@@ -89,6 +94,11 @@ class BleBridge:
         self._cmd: queue.Queue[_Command] = queue.Queue()
         self._loop_ready = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        # 自動再接続: 確立済み接続が不意に切れたら、このアドレスへ無限リトライする。
+        # 意図的な切断（disconnect()/close()/別デバイスへのconnect()）では None に戻す
+        self._reconnect_address: str | None = None
+        self._reconnect_pending = False   # 再接続コマンドの多重投入防止
+        self._expect_disconnect = False   # 意図的切断中は callback で再接続しない
         self._thread = threading.Thread(
             target=self._run_thread, name="ble-bridge", daemon=True
         )
@@ -106,6 +116,14 @@ class BleBridge:
 
     def disconnect(self) -> None:
         self._cmd.put(_Command(_CMD_DISCONNECT))
+
+    def request_reconnect(self) -> None:
+        """ゲーム側からの強制再接続要求（テレメトリ途絶ウォッチドッグ用）。
+
+        接続済みデバイスから一定時間データが来ない場合の保険。確立済み接続が
+        無ければ（_reconnect_address が None）何もしない。
+        """
+        self._cmd.put(_Command(_CMD_RECONNECT))
 
     def close(self) -> None:
         self._cmd.put(_Command(_CMD_STOP))
@@ -133,17 +151,36 @@ class BleBridge:
             while True:
                 cmd = await loop.run_in_executor(None, self._cmd.get)
                 if cmd.kind == _CMD_STOP:
+                    self._reconnect_address = None
                     break
                 if cmd.kind == _CMD_SCAN:
                     await self._do_scan(cmd.args["timeout"])
                 elif cmd.kind == _CMD_CONNECT:
+                    self._reconnect_address = None
                     if client is not None:
                         await self._safe_disconnect(client)
                     client = await self._do_connect(cmd.args["address"])
+                    if client is not None:
+                        # 接続確立成功 → 以後の不意の切断は自動再接続する
+                        self._reconnect_address = cmd.args["address"]
                 elif cmd.kind == _CMD_DISCONNECT:
+                    self._reconnect_address = None
                     if client is not None:
                         await self._safe_disconnect(client)
                         client = None
+                elif cmd.kind == _CMD_RECONNECT:
+                    self._reconnect_pending = False
+                    address = self._reconnect_address
+                    if address is None:
+                        continue  # 意図的切断済み → 再接続しない
+                    if client is not None:
+                        await self._safe_disconnect(client)
+                        client = None
+                    self.events.put(BridgeEvent("reconnecting", address))
+                    client = await self._do_connect(address)
+                    if client is None:
+                        # 失敗 → 一定間隔をおいて無限リトライ
+                        self._schedule_reconnect(_RECONNECT_RETRY_S)
         finally:
             if client is not None:
                 await self._safe_disconnect(client)
@@ -285,9 +322,28 @@ class BleBridge:
     def _on_disconnect(self, _client: BleakClient) -> None:
         # bleak の callback は別タスク。Queue 経由でメインループへ。
         self.events.put(BridgeEvent("disconnected"))
+        # 不意の切断（センサーのスリープ・電波途切れ等）→ 自動再接続を試みる。
+        # 意図的切断中（_expect_disconnect）はここでは何もしない
+        if not self._expect_disconnect:
+            self._schedule_reconnect()
+
+    def _schedule_reconnect(self, delay_s: float = 0.0) -> None:
+        """再接続コマンドを（必要なら遅延付きで）投入する。BLEスレッドから呼ぶ。"""
+        if self._reconnect_address is None or self._reconnect_pending:
+            return
+        self._reconnect_pending = True
+        if delay_s > 0 and self._loop is not None:
+            self._loop.call_later(
+                delay_s, self._cmd.put, _Command(_CMD_RECONNECT)
+            )
+        else:
+            self._cmd.put(_Command(_CMD_RECONNECT))
 
     async def _safe_disconnect(self, client: BleakClient) -> None:
+        self._expect_disconnect = True
         try:
             await client.disconnect()
         except Exception as e:
             log.warning("disconnect failed: %s", e)
+        finally:
+            self._expect_disconnect = False

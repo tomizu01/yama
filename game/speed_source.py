@@ -22,6 +22,8 @@ from game import config as C
 _INERTIA_TAU_S = 4.0
 # テレメトリが何秒来なければ「停止」とみなすか
 _STOP_TIMEOUT_S = 3.0
+# テレメトリが何秒途絶えたら強制再接続を要求するか（切断 callback が来ない場合の保険）
+_RECONNECT_WATCHDOG_S = 20.0
 
 
 class Mode(Enum):
@@ -39,6 +41,7 @@ class SpeedSource:
     """ライダーの現在速度を供給するインターフェース。"""
 
     mode_label: str = "DEMO"
+    status_text: str | None = None   # HUD に出す異常状態（None = 正常）
 
     def update(self, dt: float) -> None:
         pass
@@ -129,6 +132,16 @@ class BleSpeedSource(SpeedSource):
             self._cadence_rpm = 0.0
             self._power_w = 0.0
 
+        # 2.5) テレメトリ途絶ウォッチドッグ。bleak の切断 callback が来ないまま
+        # 接続が死んでいるケースの保険として、強制再接続を要求する。
+        # （単に漕いでいないだけでセンサーが通知を止めている場合も再接続が走るが、
+        #   速度は既に0なので実害はない）
+        if (self._got_first_telemetry
+                and self._t - self._last_telemetry_at > _RECONNECT_WATCHDOG_S):
+            self.bridge.request_reconnect()
+            self._last_telemetry_at = self._t  # 再アーム（毎フレーム要求しない）
+            self.status_text = "RECONNECT..."
+
         # 3) 飽和速度を計算
         sat = self._saturation_kmh()
 
@@ -157,7 +170,16 @@ class BleSpeedSource(SpeedSource):
                 if touched:
                     self._last_telemetry_at = self._t
                     self._got_first_telemetry = True
-            elif ev.kind in ("disconnected", "error"):
+            elif ev.kind in ("disconnected", "reconnecting"):
+                # bridge が自動再接続中。復帰（connected）まで HUD に出す
+                self.last_status = ev.kind
+                self.status_text = "RECONNECT..."
+            elif ev.kind == "connected":
+                self.last_status = ev.kind
+                self.status_text = None
+                # 再接続直後の停止検出/ウォッチドッグ誤発動を防ぐ
+                self._last_telemetry_at = self._t
+            elif ev.kind == "error":
                 self.last_status = ev.kind
             # その他の kind（接続中などレース前のイベント）は無視
 
