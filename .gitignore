@@ -8,6 +8,9 @@ __pycache__/
 # 開発ツールの生成物（スクリーンショット）
 tools/shots/
 
+# 走行ログ（GPX）はユーザー生成物
+activities/
+
 # Claude Code ローカル設定
 .claude/settings.local.json
 

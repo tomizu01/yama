@@ -44,6 +44,7 @@ game/
   obstacles.py          藁の生成・遠近描画・衝突判定
   race.py               Race クラス（update/draw 分離）+ ステージ進行ループ run()
   stages.py             駅CSV読込 / Station・Stage / 距離概算 / ノルマ計算
+  recorder.py           GPXトラック記録（線形補完で lat/lon を5秒おきに）
   ble/
     constants.py        BLE UUID 定数（CSC/CPS/FE-C）
     parser.py           CSC/CPS Measurement のパース + speed/cadence 算出（ロールオーバー処理込み）
@@ -59,6 +60,7 @@ docs/
   tacx-fec-over-ble.md  BLE: FE-C over BLE 仕様（トレーナー制御・双方向）
 lines/
   yamanote.csv          山手線駅: 駅名,緯度,経度（末尾に東京駅を再掲し周回を閉じる）
+activities/             走行ログ（GPX）の出力先。gitignore（ユーザー生成物）
 sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
 ```
 
@@ -122,3 +124,8 @@ sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
 - **ステージ間の SpeedSource**: 同じ `speed_source` を全ステージで共有。BLE 接続も
   画面遷移中の `_wait_click_or_quit` 内で update() され続けるので、停止検出・テレメトリ
   受信は途切れない
+- **GPX記録**: `TrackRecorder` がセッション全体（全ステージ）の点を蓄積。Race.update から
+  5秒おきに進捗チェック → 開始駅↔終了駅を progress(0..1) で線形補完した (lat, lon, UTC時刻)
+  を記録。ステージクリア時にゴール駅を `force_record_endpoint` で強制記録（取りこぼし防止）。
+  クリア画面の「GPXを記録する」ボタンで `activities/YYYYMMDD_hhmmss.gpx` に書き出す
+  （`<type>VirtualRide</type>` 入り GPX 1.1）

@@ -1,5 +1,6 @@
 """レース画面（フェーズ1: 走行 / フェーズ2: BLE / フェーズ3: ステージ進行）。"""
 
+import os
 import random
 
 import pygame
@@ -10,6 +11,7 @@ from game.assets import Assets
 from game.menu import run_setup
 from game.obstacles import ObstacleField
 from game.player import Player
+from game.recorder import TrackRecorder, default_activities_dir
 from game.speed_source import ConstantSpeedSource, SpeedSource
 
 
@@ -23,10 +25,12 @@ class Race:
 
     def __init__(self, assets: Assets, speed_source: SpeedSource,
                  stage: S.Stage | None = None,
+                 recorder: TrackRecorder | None = None,
                  rng: random.Random | None = None) -> None:
         self.assets = assets
         self.speed_source = speed_source
         self.stage = stage
+        self.recorder = recorder
         self.player = Player()
         self.field = ObstacleField(rng)
         self.distance_m = 0.0          # 視覚距離（障害物の生成・位置に使う）
@@ -58,6 +62,11 @@ class Race:
         d_prev = self.distance_m
         self.distance_m += real_v_ms * C.VISUAL_SPEED_FACTOR * dt
         self.elapsed_s += dt
+
+        # GPXトラック記録（ステージ中のみ）
+        if self.recorder is not None and self.stage is not None and self.stage.distance_m > 0:
+            progress = self.real_distance_m / self.stage.distance_m
+            self.recorder.tick(dt, self.stage, progress)
 
         # 左右移動
         self.player.update(dt, mouse_x)
@@ -191,10 +200,24 @@ def _draw_stage_start(
     _center("クリックでスタート", fonts["mid"], 800, (220, 220, 220))
 
 
+def _draw_button(
+    surface: pygame.Surface, rect: pygame.Rect, label: str,
+    font: pygame.font.Font, hovered: bool,
+) -> None:
+    bg = (80, 120, 180) if hovered else (50, 80, 130)
+    pygame.draw.rect(surface, bg, rect, border_radius=8)
+    pygame.draw.rect(surface, (200, 220, 255), rect, width=2, border_radius=8)
+    t = font.render(label, True, (255, 255, 255))
+    surface.blit(t, (rect.centerx - t.get_width() // 2,
+                     rect.centery - t.get_height() // 2))
+
+
 def _draw_stage_clear(
     screen: pygame.Surface, fonts: dict, stage: S.Stage,
     elapsed_s: float, distance_m: float, bg: pygame.Surface, is_final: bool,
-) -> None:
+    saved_msg: str | None, mouse_pos: tuple[int, int],
+) -> dict[str, pygame.Rect]:
+    """ステージクリア画面を描画して、ボタンの Rect を返す。"""
     screen.blit(bg, (0, 0))
     overlay = pygame.Surface((C.SCREEN_W, C.SCREEN_H), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
@@ -207,20 +230,75 @@ def _draw_stage_clear(
         surf = font.render(text, True, color)
         screen.blit(surf, (cx - surf.get_width() // 2, y))
 
-    _center(f"STAGE {stage.index} / {stage.total}  CLEAR", fonts["mid"], 150, (200, 220, 255))
-    _center(stage.label, fonts["big"], 220)
+    _center(f"STAGE {stage.index} / {stage.total}  CLEAR", fonts["mid"], 120, (200, 220, 255))
+    _center(stage.label, fonts["big"], 190)
 
-    _center(f"進んだ距離  {distance_m:,.0f} m", fonts["mid"], 380)
-    _center(f"所要時間    {S.format_mmss(elapsed_s)}", fonts["mid"], 440)
-    _center(f"ノルマ      {S.format_mmss(stage.norma_s)}", fonts["mid"], 500, (180, 200, 220))
+    _center(f"進んだ距離  {distance_m:,.0f} m", fonts["mid"], 350)
+    _center(f"所要時間    {S.format_mmss(elapsed_s)}", fonts["mid"], 410)
+    _center(f"ノルマ      {S.format_mmss(stage.norma_s)}", fonts["mid"], 470, (180, 200, 220))
 
     if won:
-        _center("WIN!", fonts["title"], 600, (120, 255, 140))
+        _center("WIN!", fonts["title"], 550, (120, 255, 140))
     else:
-        _center("LOSE...", fonts["title"], 600, (255, 120, 120))
+        _center("LOSE...", fonts["title"], 550, (255, 120, 120))
 
-    hint = "クリックで終了" if is_final else "クリックで次のステージへ"
-    _center(hint, fonts["mid"], 820, (220, 220, 220))
+    # ボタン2つ
+    btn_w, btn_h, gap = 380, 80, 60
+    total_w = btn_w * 2 + gap
+    start_x = (C.SCREEN_W - total_w) // 2
+    y = 770
+    btn_gpx = pygame.Rect(start_x, y, btn_w, btn_h)
+    btn_next = pygame.Rect(start_x + btn_w + gap, y, btn_w, btn_h)
+
+    _draw_button(screen, btn_gpx, "GPXを記録する",
+                 fonts["mid"], btn_gpx.collidepoint(mouse_pos))
+    next_label = "終了" if is_final else "次のステージへ"
+    _draw_button(screen, btn_next, next_label,
+                 fonts["mid"], btn_next.collidepoint(mouse_pos))
+
+    if saved_msg:
+        _center(saved_msg, fonts["small"], y + btn_h + 24, (180, 255, 180))
+
+    return {"gpx": btn_gpx, "next": btn_next}
+
+
+def _run_stage_clear(
+    screen: pygame.Surface, clock: pygame.time.Clock,
+    speed_source: SpeedSource, fonts: dict, stage: S.Stage, race: "Race",
+    recorder: TrackRecorder, bg: pygame.Surface, is_final: bool,
+) -> bool:
+    """クリア画面のループ。True=次へ進む / False=ユーザー終了。"""
+    saved_msg: str | None = None
+    while True:
+        dt = clock.tick(C.FPS) / 1000.0
+        speed_source.update(dt)
+
+        mouse_pos = pygame.mouse.get_pos()
+        rects = _draw_stage_clear(
+            screen, fonts, stage, race.elapsed_s, race.real_distance_m,
+            bg, is_final, saved_msg, mouse_pos,
+        )
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if rects["gpx"].collidepoint(event.pos):
+                    try:
+                        path = recorder.write_gpx(default_activities_dir())
+                        saved_msg = f"保存しました: {os.path.basename(path)}"
+                    except Exception as e:
+                        saved_msg = f"保存失敗: {e}"
+                elif rects["next"].collidepoint(event.pos):
+                    return True
+            if event.type == pygame.KEYDOWN and isinstance(speed_source, ConstantSpeedSource):
+                if event.key == pygame.K_UP:
+                    speed_source.adjust(+C.DEBUG_SPEED_STEP)
+                elif event.key == pygame.K_DOWN:
+                    speed_source.adjust(-C.DEBUG_SPEED_STEP)
 
 
 def run() -> None:
@@ -238,6 +316,9 @@ def run() -> None:
     stations = S.load_stations(S.default_csv_path())
     stages_list = S.build_stages(stations)
 
+    # フェーズ3+: セッション全体のGPX記録
+    recorder = TrackRecorder(line_name="山手線")
+
     quit_game = False
     try:
         for stage in stages_list:
@@ -250,7 +331,7 @@ def run() -> None:
                 break
 
             # --- レース本体 ---
-            race = Race(assets, speed_source, stage=stage)
+            race = Race(assets, speed_source, stage=stage, recorder=recorder)
             stage_finished = False
             while not stage_finished:
                 dt = min(clock.tick(C.FPS) / 1000.0, 0.05)
@@ -275,16 +356,17 @@ def run() -> None:
 
                 if race.cleared:
                     stage_finished = True
+                    # ゴール駅を強制記録（5秒タイマーの取りこぼし防止）
+                    recorder.force_record_endpoint(stage)
 
             if quit_game:
                 break
 
-            # --- ステージクリア画面 ---
+            # --- ステージクリア画面（GPX保存ボタン付き） ---
             is_final = stage.index == stage.total
-            if not _wait_click_or_quit(
-                screen, clock, speed_source,
-                lambda sc, st=stage, e=race.elapsed_s, d=race.real_distance_m,
-                fin=is_final: _draw_stage_clear(sc, fonts, st, e, d, assets.bg, fin),
+            if not _run_stage_clear(
+                screen, clock, speed_source, fonts, stage, race, recorder,
+                assets.bg, is_final,
             ):
                 quit_game = True
                 break
