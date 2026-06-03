@@ -1,4 +1,4 @@
-"""山手線大冒険 — エントリポイント。"""
+"""路線Rider — エントリポイント。"""
 
 from game.race import run
 

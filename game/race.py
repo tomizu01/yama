@@ -1,4 +1,4 @@
-"""レース画面（フェーズ1: 常時走行・障害物回避）。"""
+"""レース画面（フェーズ1: 常時走行・障害物回避 / フェーズ2: BLE速度連携対応）。"""
 
 import random
 
@@ -6,6 +6,7 @@ import pygame
 
 from game import config as C
 from game.assets import Assets
+from game.menu import run_setup
 from game.obstacles import ObstacleField
 from game.player import Player
 from game.speed_source import ConstantSpeedSource, SpeedSource
@@ -63,6 +64,14 @@ class Race:
             f"SPEED {self.effective_kmh:5.1f} km/h",
             f"DIST  {self.distance_m:6.0f} m",
         ]
+        # BLE モードのときはケイデンス/パワーも表示（取得できているときのみ）
+        cad = self.speed_source.cadence_rpm
+        pw = self.speed_source.power_w
+        if cad is not None:
+            lines.append(f"CAD   {cad:5.0f} rpm")
+        if pw is not None:
+            lines.append(f"POWER {pw:5.0f} W")
+        lines.append(f"MODE  {self.speed_source.mode_label}")
         for i, text in enumerate(lines):
             y = 16 + i * 44
             surface.blit(font.render(text, True, (0, 0, 0)), (22, y + 2))
@@ -83,11 +92,13 @@ class Race:
 def run() -> None:
     pygame.init()
     screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H), pygame.SCALED)
-    pygame.display.set_caption("山手線大冒険")
+    pygame.display.set_caption("路線Rider")
     clock = pygame.time.Clock()
 
+    # フェーズ2: 起動時のセットアップ画面でBLE/デモを選択
+    speed_source, cleanup = run_setup(screen, clock)
+
     assets = Assets()
-    speed_source = ConstantSpeedSource()
     race = Race(assets, speed_source)
 
     running = True
@@ -99,11 +110,12 @@ def run() -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                # 開発用: ↑↓で巡航速度を調整（フェーズ2で実速度に置き換わる）
-                elif event.key == pygame.K_UP:
-                    speed_source.adjust(+C.DEBUG_SPEED_STEP)
-                elif event.key == pygame.K_DOWN:
-                    speed_source.adjust(-C.DEBUG_SPEED_STEP)
+                # デモ走行時のみ ↑↓ で速度調整（BLE 接続中は実速度が使われる）
+                elif isinstance(speed_source, ConstantSpeedSource):
+                    if event.key == pygame.K_UP:
+                        speed_source.adjust(+C.DEBUG_SPEED_STEP)
+                    elif event.key == pygame.K_DOWN:
+                        speed_source.adjust(-C.DEBUG_SPEED_STEP)
 
         mouse_x, _ = pygame.mouse.get_pos()
         race.update(dt, mouse_x)
@@ -111,4 +123,5 @@ def run() -> None:
         pygame.display.flip()
 
     speed_source.close()
+    cleanup()
     pygame.quit()
