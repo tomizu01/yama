@@ -104,9 +104,10 @@ class Race:
             surface.blit(font.render(text, True, color), (20, y))
 
         if self.stage is not None:
+            jp_font = self.assets.jp_hud_font
             stage_label = f"STAGE {self.stage.index}/{self.stage.total}  {self.stage.label}"
-            label_surf = font.render(stage_label, True, (255, 255, 255))
-            label_bg = font.render(stage_label, True, (0, 0, 0))
+            label_surf = jp_font.render(stage_label, True, (255, 255, 255))
+            label_bg = jp_font.render(stage_label, True, (0, 0, 0))
             x = C.SCREEN_W - label_surf.get_width() - 20
             surface.blit(label_bg, (x + 2, 18))
             surface.blit(label_surf, (x, 16))

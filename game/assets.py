@@ -21,6 +21,10 @@ class Assets:
 
         self.hud_font = pygame.font.SysFont("consolas", 36, bold=True)
         self.big_font = pygame.font.SysFont("consolas", 80, bold=True)
+        # 駅名など日本語表示用（Windows優先で順に試す）
+        self.jp_hud_font = pygame.font.SysFont(
+            "yugothicui,yugothic,meiryo,msgothic,consolas", 32, bold=True
+        )
 
         # 藁はフレーム毎に大きさが変わるため、幅(px)ごとにスケール結果をキャッシュ
         self._wara_cache: dict[int, pygame.Surface] = {}
