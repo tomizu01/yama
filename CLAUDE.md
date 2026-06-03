@@ -23,9 +23,10 @@
 - [x] **フェーズ1: レトロゲーム風レース** — 完了（2026-06-03）。ゲーム性検証可能な状態
 - [x] **フェーズ2: BLE連携** — 完了（2026-06-03）。CSC/CPS スキャン → pygame内メニューで
   デバイス＋モード選択 → テレメトリから飽和速度算出 → 慣性シミュレーションで現在速度収束
-- [ ] **フェーズ3: ステージ作成** — 山手線1駅=1ステージ、東京駅発着、ノルマタイム・勾配。
-  ここで gradient を BleSpeedSource に流し込む。FE-C 送信も同時に実装する想定
-- [ ] **フェーズ4: ブラッシュアップ**
+- [x] **フェーズ3: ステージ作成** — 完了（2026-06-03）。`lines/yamanote.csv`(31駅) から
+  30ステージ生成、ステージ開始/クリア画面、ノルマタイム判定（25km/h基準）、HUD拡張
+- [ ] **フェーズ4: ブラッシュアップ** — 未着手。勾配を BleSpeedSource に流し込む、
+  FE-C 送信（トレーナーへの負荷制御）等
 
 BLE実機は自宅にある（仕様書は docs/ に格納済み）。
 
@@ -41,7 +42,8 @@ game/
   menu.py               起動時セットアップ画面（スキャン→デバイス選択→モード選択）
   player.py             自転車（左右移動・描画）
   obstacles.py          藁の生成・遠近描画・衝突判定
-  race.py               Race クラス（update/draw 分離）+ メインループ run()
+  race.py               Race クラス（update/draw 分離）+ ステージ進行ループ run()
+  stages.py             駅CSV読込 / Station・Stage / 距離概算 / ノルマ計算
   ble/
     constants.py        BLE UUID 定数（CSC/CPS/FE-C）
     parser.py           CSC/CPS Measurement のパース + speed/cadence 算出（ロールオーバー処理込み）
@@ -55,6 +57,8 @@ docs/
   ble-csc-profile.md    BLE: Cycling Speed and Cadence 仕様
   ble-cps-profile.md    BLE: Cycling Power 仕様
   tacx-fec-over-ble.md  BLE: FE-C over BLE 仕様（トレーナー制御・双方向）
+lines/
+  yamanote.csv          山手線駅: 駅名,緯度,経度（末尾に東京駅を再掲し周回を閉じる）
 sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
 ```
 
@@ -68,8 +72,10 @@ sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
   プレッシャー軽減のため縮小、当たり判定も連動）。レーンは `±0.60, ±0.20` の4スロット、
   1列最大2個 → 必ず通り道が残る
 - **`VISUAL_SPEED_FACTOR = 2.0`**: 見た目の進行は実速度の2倍（ユーザー調整）。
-  HUDの速度表示は実速度のまま。⚠ フェーズ3で実駅間距離と整合を取るとき要検討
-  （実走距離はゲーム内距離の半分になる → ノルマタイムで調整 or ステージ距離2倍）
+  HUDの速度表示は実速度のまま。`Race` 内で `distance_m`（視覚距離・障害物用、×2倍）と
+  `real_distance_m`（実距離・ステージ進行/HUD用）を分離してこの矛盾を解消している
+- **`PERSPECTIVE_POWER = 2.2`**: 投影曲線のベキ乗（`t = (Z_NEAR/(Z_NEAR+z))^k`）。
+  >1で遠くは控えめ・手前で一気に迫る加速感。ユーザー調整で2.2に確定
 - **衝突ペナルティ**: 速度倍率 0.35 に低下 → 0.22/s で回復（約3秒）。同じ藁に再ヒットなし
 - **速度入力の抽象化**: `SpeedSource` インターフェース（`update(dt)` / `speed_kmh` /
   optional `cadence_rpm` / `power_w` / `mode_label` / `close()`）。
@@ -100,3 +106,19 @@ sozai/images/           bg.png(1504x1034) / chari.png(128x128) / wara.png(96x96)
   （クランクはどちらも 1/1024 秒）。`parser.py` で `ticks_per_sec` を分けている
 - **詳細仕様**: docs/ の3ファイル（CSC, CPS, FE-C）参照。aicyc-CLAUDE.md は過去プロジェクト
   のリファレンス（速度計算式・慣性式の出典）
+
+## フェーズ3 ステージ実装メモ
+
+- **駅データ**: `lines/yamanote.csv`（駅名,緯度,経度）。末尾に1駅目（東京）を再掲して
+  周回を閉じる。連続ペアを enumerate するだけで N ステージ生成
+- **距離概算**: 緯度1度≒111km、経度1度≒91km（東京緯度 cos(35°)×111km）。
+  山手線一周は概算 32.6km（実 34.5km、誤差 5% 程度で「概算でOK」要件を満たす）
+- **ノルマ**: 25 km/h で走行したときの所要時間（`stages.NORMA_KMH`）
+- **ステージ進行**: `race.run()` が「開始画面 → レース → クリア画面」を 30 回ループ。
+  クリア画面で経過時間 ≤ ノルマで WIN、超過で LOSE 表示。最終ステージのクリア画面で
+  クリックすると終了
+- **距離の2系統**: `Race.distance_m` は ×`VISUAL_SPEED_FACTOR` の視覚距離（障害物の
+  生成位置に使う）、`Race.real_distance_m` は実距離（ステージゴール判定・HUD表示に使う）
+- **ステージ間の SpeedSource**: 同じ `speed_source` を全ステージで共有。BLE 接続も
+  画面遷移中の `_wait_click_or_quit` 内で update() され続けるので、停止検出・テレメトリ
+  受信は途切れない
