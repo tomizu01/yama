@@ -1,11 +1,13 @@
-"""ゲーム起動時のセットアップ画面（BLEデバイス選択 → モード選択）。
+"""ゲーム起動時のセットアップ画面と路線選択画面。
+
+- `run_setup()`: BLEデバイス検索 → デバイス選択 → モード選択 →
+  （FE-C対応デバイスなら）FE-C制御 ON/OFF 選択。またはデモ走行。
+  戻り値は (speed_source, cleanup) のタプル。`cleanup()` はゲーム終了時に呼ぶこと
+  （Bleak スレッドの片付け）。
+- `run_line_select()`: lines/*.csv からの路線選択。セットアップの後に挟む。
 
 レトロゲームっぽい質感を保つため、専用UIライブラリは使わずシンプルな
 テキストリスト + マウスクリックで作る。
-
-戻り値:
-    (speed_source, cleanup) のタプル。`cleanup()` はゲーム終了時に呼ぶこと
-    （Bleak スレッドの片付け）。
 """
 
 from __future__ import annotations
