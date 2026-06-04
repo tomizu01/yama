@@ -1,7 +1,9 @@
 """路線のステージデータ（駅一覧 → 区間ステージ）。
 
 CSV: `lines/<name>.csv` 形式
-    駅名,緯度,経度
+    駅名,緯度,経度,勾配[%]
+（勾配カラムは省略可。各ステージの勾配は「到着駅」の値を使う。
+  例: 東京→有楽町 は有楽町の勾配で走る）
 
 距離計算は概算。
   緯度1度 ≒ 111 km
@@ -33,6 +35,7 @@ class Station:
     name: str
     lat: float
     lon: float
+    gradient_pct: float = 0.0   # この駅へ向かう区間の勾配 [%]
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,11 @@ class Stage:
     def label(self) -> str:
         return f"{self.start.name} → {self.goal.name}"
 
+    @property
+    def gradient_pct(self) -> float:
+        """ステージ走行中の勾配 [%]。到着駅の値を使う。"""
+        return self.goal.gradient_pct
+
 
 def load_stations(csv_path: str) -> list[Station]:
     stations: list[Station] = []
@@ -57,7 +65,11 @@ def load_stations(csv_path: str) -> list[Station]:
             if not row or not row[0].strip():
                 continue
             name, lat_s, lon_s = row[0], row[1], row[2]
-            stations.append(Station(name=name.strip(), lat=float(lat_s), lon=float(lon_s)))
+            grad = float(row[3]) if len(row) >= 4 and row[3].strip() else 0.0
+            stations.append(Station(
+                name=name.strip(), lat=float(lat_s), lon=float(lon_s),
+                gradient_pct=grad,
+            ))
     return stations
 
 

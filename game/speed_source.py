@@ -24,6 +24,9 @@ _INERTIA_TAU_S = 4.0
 _STOP_TIMEOUT_S = 3.0
 # テレメトリが何秒途絶えたら強制再接続を要求するか（切断 callback が来ない場合の保険）
 _RECONNECT_WATCHDOG_S = 20.0
+# FE-C 勾配の再送間隔 [s]。トレーナー側タイムアウトでの負荷解除と
+# 再接続後の負荷消失を防ぐため、同じ値でも定期的に送り続ける
+_FEC_RESEND_INTERVAL_S = 2.0
 
 
 class Mode(Enum):
@@ -42,9 +45,14 @@ class SpeedSource:
 
     mode_label: str = "DEMO"
     status_text: str | None = None   # HUD に出す異常状態（None = 正常）
+    gradient_pct: float = 0.0        # 現在の勾配 [%]
 
     def update(self, dt: float) -> None:
         pass
+
+    def set_gradient(self, gradient_pct: float) -> None:
+        """現在の勾配 [%] を設定する（ステージ開始時に呼ばれる）。"""
+        self.gradient_pct = gradient_pct
 
     @property
     def speed_kmh(self) -> float:
@@ -85,15 +93,22 @@ class BleSpeedSource(SpeedSource):
     """BLE テレメトリから飽和速度を算出して慣性で収束させる。
 
     `bridge.events` を毎フレーム drain して最新のテレメトリを保持し、`update(dt)`
-    のたびに飽和速度 → 現在速度を更新する。`gradient` はフェーズ3でステージ実装後に
-    流し込む想定で、現状は常に 0。
+    のたびに飽和速度 → 現在速度を更新する。`gradient_pct` はステージ開始時に
+    `set_gradient()` で流し込まれ、飽和速度の計算式と FE-C 負荷制御の両方に効く。
+
+    `fec_enabled=True` なら、勾配を FE-C Track Resistance (Page 51) でトレーナーへ
+    送信する。トレーナー側のタイムアウトと再接続後の負荷消失に備えて
+    `_FEC_RESEND_INTERVAL_S` ごとに同じ値を再送し続ける。
     """
 
-    def __init__(self, bridge, mode: Mode, gradient_pct: float = 0.0) -> None:
+    def __init__(self, bridge, mode: Mode, gradient_pct: float = 0.0,
+                 fec_enabled: bool = False) -> None:
         self.bridge = bridge
         self.mode = mode
-        self.mode_label = mode.label
+        self.mode_label = mode.label + (" +FEC" if fec_enabled else "")
         self.gradient_pct = gradient_pct
+        self.fec_enabled = fec_enabled
+        self._fec_resend_t = 0.0   # 次の FE-C 再送までの残り時間
 
         self._speed_kmh = 0.0
         self._sensor_speed_kmh: float | None = None
@@ -142,12 +157,27 @@ class BleSpeedSource(SpeedSource):
             self._last_telemetry_at = self._t  # 再アーム（毎フレーム要求しない）
             self.status_text = "RECONNECT..."
 
+        # 2.7) FE-C 勾配の定期再送
+        if self.fec_enabled:
+            self._fec_resend_t -= dt
+            if self._fec_resend_t <= 0.0:
+                self.bridge.set_grade(self.gradient_pct)
+                self._fec_resend_t = _FEC_RESEND_INTERVAL_S
+
         # 3) 飽和速度を計算
         sat = self._saturation_kmh()
 
         # 4) 慣性で current → saturation に収束
         alpha = 1.0 - math.exp(-dt / _INERTIA_TAU_S)
         self._speed_kmh += (sat - self._speed_kmh) * alpha
+
+    def set_gradient(self, gradient_pct: float) -> None:
+        self.gradient_pct = gradient_pct
+        if self.fec_enabled:
+            # 即時送信（次フレームの再送タイマーを0にして update() に任せてもよいが、
+            # ステージ開始時に確実に届くよう直接送る）
+            self.bridge.set_grade(gradient_pct)
+            self._fec_resend_t = _FEC_RESEND_INTERVAL_S
 
     def _drain_events(self) -> None:
         while True:

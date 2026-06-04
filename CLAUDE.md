@@ -29,8 +29,9 @@
   デバイス＋モード選択 → テレメトリから飽和速度算出 → 慣性シミュレーションで現在速度収束
 - [x] **フェーズ3: ステージ作成** — 完了（2026-06-03）。`lines/yamanote.csv`(31駅) から
   30ステージ生成、ステージ開始/クリア画面、ノルマタイム判定（25km/h基準）、HUD拡張
-- [ ] **フェーズ4: ブラッシュアップ** — 未着手。勾配を BleSpeedSource に流し込む、
-  FE-C 送信（トレーナーへの負荷制御）等
+- [-] **フェーズ4: ブラッシュアップ** — 着手中。勾配＋FE-C負荷制御は実装済み
+  （2026-06-04、下記「フェーズ4 勾配・FE-C実装メモ」参照）。
+  残: 勾配を考慮したノルマ時間（実走してから決める）
 
 ### フェーズ3完了後の追加機能
 
@@ -78,13 +79,14 @@ tools/
   measure_bg.py         bg.png の道路形状測定（開発用）
   screenshot_test.py    ヘッドレスで数秒シミュレートしてスクショ保存（描画検証用）
   perf_test.py          フレーム時間計測（Race の update+draw のみ、display抜き）
+  gradient_test.py      勾配/FE-C の検証（CSV読込・Page51エンコード・HUD描画）
 docs/
   YamanoteDaibouken.md  企画書
   ble-csc-profile.md    BLE: Cycling Speed and Cadence 仕様
   ble-cps-profile.md    BLE: Cycling Power 仕様
   tacx-fec-over-ble.md  BLE: FE-C over BLE 仕様（トレーナー制御・双方向）
 lines/
-  yamanote.csv          山手線駅: 駅名,緯度,経度（末尾に東京駅を再掲し周回を閉じる）
+  yamanote.csv          山手線駅: 駅名,緯度,経度,勾配[%]（末尾に東京駅を再掲し周回を閉じる）
 activities/             走行ログ（GPX）の出力先。gitignore（ユーザー生成物）
 sozai/images/           bg.png(1504x1034) / chari.png・chari2.png(128x128, 漕ぎアニメ2コマ) / wara.png(96x96)
 ```
@@ -140,9 +142,30 @@ sozai/images/           bg.png(1504x1034) / chari.png・chari2.png(128x128, 漕�
 - **詳細仕様**: docs/ の3ファイル（CSC, CPS, FE-C）参照。aicyc-CLAUDE.md は過去プロジェクト
   のリファレンス（速度計算式・慣性式の出典）
 
+## フェーズ4 勾配・FE-C実装メモ（2026-06-04）
+
+- **勾配データ**: `lines/yamanote.csv` の第4カラム（% 単位、省略時0）。
+  各ステージの勾配は「**到着駅**」の値を使う（例: 東京→有楽町は有楽町の勾配で走る）。
+  `Stage.gradient_pct` プロパティ = `goal.gradient_pct`。ステージ中はずっと同じ勾配
+- **勾配の流し込み**: `race.run()` がレース開始時に `speed_source.set_gradient()` を呼ぶ
+  （`SpeedSource` 基底に no-op の `set_gradient()` あり、デモ走行でも安全）。
+  BLE の CADENCE/POWER モードでは飽和速度式の `g` に効く（式は既存、フェーズ2から待機済み）
+- **FE-C 負荷制御**: モード選択後、接続デバイスが FE-C サービス
+  (`6E40FEC1-...`) を持つ場合のみ「FE-C制御 ON/OFF」選択画面を表示（`_S_FEC_SELECT`）。
+  ON なら `BleSpeedSource(fec_enabled=True)` が勾配を Page 51 (Track Resistance) で
+  トレーナーへ送信。HUD の MODE 表示に「+FEC」が付く
+- **定期再送**: トレーナー側タイムアウトでの負荷解除・再接続後の負荷消失に備えて
+  `BleSpeedSource` が 2 秒おきに同じ勾配を再送（`_FEC_RESEND_INTERVAL_S`）。
+  ステージ開始時は即時送信。bridge 側は未接続/非対応なら黙って無視（書込失敗もログのみ）
+- **エンコード**: `bridge._build_fec_track_resistance()`。13バイト ANT メッセージ
+  (sync 0xA4 / broadcast 0x4E / ch 5)、Grade = `(g% + 200) / 0.01` Uint16 LE、
+  CRR = 0.004（アスファルト）。docs/tacx-fec-over-ble.md の例と照合済み（tools/gradient_test.py）
+- **HUD**: レース中に `GRADE +5.0 %` 行（登り=橙、下り=水色）。ステージ開始画面にも勾配表示
+- **ノルマ時間**: 勾配は未考慮（25km/h 固定のまま）。実走してから調整する方針
+
 ## フェーズ3 ステージ実装メモ
 
-- **駅データ**: `lines/yamanote.csv`（駅名,緯度,経度）。末尾に1駅目（東京）を再掲して
+- **駅データ**: `lines/yamanote.csv`（駅名,緯度,経度,勾配[%]）。末尾に1駅目（東京）を再掲して
   周回を閉じる。連続ペアを enumerate するだけで N ステージ生成
 - **距離概算**: 緯度1度≒111km、経度1度≒91km（東京緯度 cos(35°)×111km）。
   山手線一周は概算 32.6km（実 34.5km、誤差 5% 程度で「概算でOK」要件を満たす）

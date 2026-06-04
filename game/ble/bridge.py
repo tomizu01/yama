@@ -55,7 +55,7 @@ class BridgeEvent:
       "scan_result"  payload: DeviceCandidate           — 検出ごとに1個
       "scan_done"    payload: None                      — スキャン終了
       "connecting"   payload: str (address)
-      "connected"    payload: dict — {profile, features (wheel/crank/power)}
+      "connected"    payload: dict — {profile, features (wheel/crank/power), fec}
       "telemetry"    payload: Telemetry
       "disconnected" payload: None
       "reconnecting" payload: str (address) — 自動再接続の試行開始
@@ -70,10 +70,40 @@ _CMD_SCAN = "scan"
 _CMD_CONNECT = "connect"
 _CMD_DISCONNECT = "disconnect"
 _CMD_RECONNECT = "reconnect"
+_CMD_SET_GRADE = "set_grade"
 _CMD_STOP = "stop"
 
 # 自動再接続のリトライ間隔 [s]。デバイスが復帰するまで無限に繰り返す
 _RECONNECT_RETRY_S = 3.0
+
+# FE-C Track Resistance (Page 51) の転がり抵抗係数。アスファルト相当
+_FEC_CRR = 0.004
+
+
+def _build_fec_track_resistance(grade_pct: float, crr: float = _FEC_CRR) -> bytes:
+    """FE-C Page 51 (Track Resistance) の13バイトメッセージを組み立てる。
+
+    勾配シミュレーション用。docs/tacx-fec-over-ble.md 参照。
+    Grade: Uint16 LE, 0.01% 解像度, `(grade% + 200) / 0.01` でエンコード。
+    """
+    grade_pct = max(-200.0, min(200.0, grade_pct))
+    grade_val = round((grade_pct + 200.0) / 0.01)
+    msg = bytearray([
+        0xA4,                       # Sync
+        0x09,                       # Length
+        0x4E,                       # Broadcast Data
+        0x05,                       # Channel（FE-C over BLE では常に5）
+        0x33,                       # Data Page 51
+        0xFF, 0xFF, 0xFF, 0xFF,     # Reserved
+        grade_val & 0xFF,           # Grade LSB
+        (grade_val >> 8) & 0xFF,    # Grade MSB
+        round(crr / 0.00005) & 0xFF,  # CRR
+    ])
+    checksum = 0
+    for b in msg:
+        checksum ^= b
+    msg.append(checksum)
+    return bytes(msg)
 
 
 @dataclass
@@ -99,6 +129,7 @@ class BleBridge:
         self._reconnect_address: str | None = None
         self._reconnect_pending = False   # 再接続コマンドの多重投入防止
         self._expect_disconnect = False   # 意図的切断中は callback で再接続しない
+        self._fec_available = False       # 接続中デバイスが FE-C サービスを持つか
         self._thread = threading.Thread(
             target=self._run_thread, name="ble-bridge", daemon=True
         )
@@ -116,6 +147,15 @@ class BleBridge:
 
     def disconnect(self) -> None:
         self._cmd.put(_Command(_CMD_DISCONNECT))
+
+    def set_grade(self, grade_pct: float) -> None:
+        """FE-C Track Resistance (Page 51) で勾配をトレーナーへ送信する。
+
+        FE-C 非対応デバイス・未接続時は黙って無視される（送信失敗もログのみ）。
+        トレーナー側のタイムアウトで負荷が解除される機種があるため、
+        呼び出し側（BleSpeedSource）が定期的に再送する前提。
+        """
+        self._cmd.put(_Command(_CMD_SET_GRADE, {"grade": grade_pct}))
 
     def request_reconnect(self) -> None:
         """ゲーム側からの強制再接続要求（テレメトリ途絶ウォッチドッグ用）。
@@ -168,6 +208,8 @@ class BleBridge:
                     if client is not None:
                         await self._safe_disconnect(client)
                         client = None
+                elif cmd.kind == _CMD_SET_GRADE:
+                    await self._send_grade(client, cmd.args["grade"])
                 elif cmd.kind == _CMD_RECONNECT:
                     self._reconnect_pending = False
                     address = self._reconnect_address
@@ -242,6 +284,9 @@ class BleBridge:
             await self._safe_disconnect(client)
             return None
 
+        # FE-C over BLE 対応か（トレーナーへの負荷制御に使う）
+        self._fec_available = U.FEC_SERVICE in available
+
         if U.CPS_SERVICE in available:
             profile = DeviceProfile.CPS
         elif U.CSC_SERVICE in available:
@@ -266,8 +311,21 @@ class BleBridge:
             "address": address,
             "profile": profile,
             "features": features,
+            "fec": self._fec_available,
         }))
         return client
+
+    async def _send_grade(self, client: BleakClient | None, grade_pct: float) -> None:
+        """FE-C RX へ Page 51 を書き込む。未接続・非対応なら何もしない。"""
+        if client is None or not self._fec_available:
+            return
+        try:
+            await client.write_gatt_char(
+                U.FEC_RX, _build_fec_track_resistance(grade_pct)
+            )
+        except Exception as e:
+            # 切断直後などに失敗し得る。定期再送されるのでログだけにする
+            log.warning("FE-C grade write failed: %s", e)
 
     async def _read_features(
         self, client: BleakClient, profile: DeviceProfile

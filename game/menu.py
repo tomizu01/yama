@@ -35,6 +35,7 @@ _S_SCANNING = "scanning"
 _S_DEVICE_SELECT = "device_select"
 _S_CONNECTING = "connecting"
 _S_MODE_SELECT = "mode_select"
+_S_FEC_SELECT = "fec_select"
 _S_DONE = "done"
 
 
@@ -74,7 +75,9 @@ def run_setup(
     state = _S_TITLE
     devices: dict[str, DeviceCandidate] = {}
     selected_device: DeviceCandidate | None = None
+    selected_mode: Mode | None = None
     connect_features: dict[str, bool] = {}
+    connect_fec = False   # 接続デバイスが FE-C over BLE 対応か
     error_msg: str | None = bridge_error
     info_msg: str | None = None
 
@@ -137,6 +140,20 @@ def run_setup(
             ))
             items.append(_MenuItem("← 戻る", payload="back"))
             return items
+        if state == _S_FEC_SELECT:
+            return [
+                _MenuItem(
+                    "FE-C制御 ON",
+                    payload="fec_on",
+                    sublabel="ステージの勾配に応じてトレーナーに負荷をかける",
+                ),
+                _MenuItem(
+                    "FE-C制御 OFF",
+                    payload="fec_off",
+                    sublabel="負荷制御なし（勾配は速度計算にのみ反映）",
+                ),
+                _MenuItem("← 戻る", payload="back"),
+            ]
         return []
 
     def _draw_header(text: str, sub: str | None = None) -> None:
@@ -196,13 +213,14 @@ def run_setup(
                 elif ev.kind == "connected" and state == _S_CONNECTING:
                     connect_features.clear()
                     connect_features.update(ev.payload.get("features", {}))
+                    connect_fec = bool(ev.payload.get("fec", False))
                     state = _S_MODE_SELECT
                     info_msg = None
                 elif ev.kind == "error":
                     error_msg = f"BLEエラー: {ev.payload}"
                     if state in (_S_CONNECTING, _S_SCANNING):
                         state = _S_TITLE
-                elif ev.kind == "disconnected" and state in (_S_CONNECTING, _S_MODE_SELECT):
+                elif ev.kind == "disconnected" and state in (_S_CONNECTING, _S_MODE_SELECT, _S_FEC_SELECT):
                     error_msg = "デバイスが切断されました"
                     state = _S_TITLE
 
@@ -215,7 +233,7 @@ def run_setup(
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if state == _S_TITLE:
                     running = False
-                elif state in (_S_DEVICE_SELECT, _S_MODE_SELECT):
+                elif state in (_S_DEVICE_SELECT, _S_MODE_SELECT, _S_FEC_SELECT):
                     state = _S_TITLE
                     error_msg = None
                     info_msg = None
@@ -251,6 +269,11 @@ def run_setup(
             _draw_header("モードを選択", f"{selected_device.name}")
             rects = _draw_items(items, mouse_pos)
             _draw_footer("マウスで選択 / ESC で戻る  (無効モードはデバイスが対応していません)")
+        elif state == _S_FEC_SELECT:
+            assert selected_device is not None
+            _draw_header("FE-C 負荷制御", f"{selected_device.name} は FE-C 対応です")
+            rects = _draw_items(items, mouse_pos)
+            _draw_footer("マウスで選択 / ESC で戻る")
         else:
             rects = []
 
@@ -290,8 +313,23 @@ def run_setup(
                         bridge.disconnect()
                         state = _S_TITLE
                     else:
-                        mode: Mode = item.payload  # type: ignore[assignment]
-                        result_source = BleSpeedSource(bridge, mode)
+                        selected_mode = item.payload  # type: ignore[assignment]
+                        if connect_fec:
+                            # FE-C 対応 → 負荷制御の ON/OFF を選択させる
+                            state = _S_FEC_SELECT
+                        else:
+                            result_source = BleSpeedSource(bridge, selected_mode)
+                            state = _S_DONE
+                            running = False
+                elif state == _S_FEC_SELECT:
+                    if item.payload == "back":
+                        state = _S_MODE_SELECT
+                    else:
+                        assert selected_mode is not None
+                        result_source = BleSpeedSource(
+                            bridge, selected_mode,
+                            fec_enabled=(item.payload == "fec_on"),
+                        )
                         state = _S_DONE
                         running = False
                 break

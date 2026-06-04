@@ -93,8 +93,11 @@ class Race:
         if self.stage is not None:
             remain = max(0.0, self.stage.distance_m - self.real_distance_m)
             time_color = (255, 220, 80) if self.elapsed_s > self.stage.norma_s else (255, 255, 255)
+            g = self.stage.gradient_pct
+            grade_color = (255, 160, 120) if g > 0 else (140, 220, 255) if g < 0 else (255, 255, 255)
             lines.append((f"DIST  {self.real_distance_m:6.0f} m", (255, 255, 255)))
             lines.append((f"GOAL  {remain:6.0f} m", (255, 255, 255)))
+            lines.append((f"GRADE {g:+5.1f} %", grade_color))
             lines.append((f"TIME  {S.format_mmss(self.elapsed_s)}", time_color))
             lines.append((f"NORMA {S.format_mmss(self.stage.norma_s)}", (180, 220, 255)))
         else:
@@ -125,6 +128,16 @@ class Race:
             x = C.SCREEN_W - label_surf.get_width() - 20
             surface.blit(label_bg, (x + 2, 18))
             surface.blit(label_surf, (x, 16))
+
+            # 残り距離を日本語で明示（外部の画面解析・実況AIが読み取りやすいように、
+            # 「どの数値がゴールまでの残りか」を表記で曖昧さなく示す）
+            remain = max(0.0, self.stage.distance_m - self.real_distance_m)
+            remain_label = f"ステージゴールまであと {remain / 1000:.2f} km"
+            remain_surf = jp_font.render(remain_label, True, (255, 230, 120))
+            remain_bg = jp_font.render(remain_label, True, (0, 0, 0))
+            x = C.SCREEN_W - remain_surf.get_width() - 20
+            surface.blit(remain_bg, (x + 2, 62))
+            surface.blit(remain_surf, (x, 60))
 
         if self.hit_timer > 0:
             msg = self.assets.big_font.render("HIT!", True, (255, 60, 40))
@@ -200,8 +213,11 @@ def _draw_stage_start(
     _center(f"STAGE {stage.index} / {stage.total}", fonts["mid"], 200, (200, 220, 255))
     _center(stage.label, fonts["title"], 270)
     _center(f"距離  {stage.distance_m:,.0f} m", fonts["big"], 430, (255, 230, 120))
+    g = stage.gradient_pct
+    grade_color = (255, 160, 120) if g > 0 else (140, 220, 255) if g < 0 else (220, 220, 220)
+    _center(f"勾配  {g:+.1f} %", fonts["mid"], 525, grade_color)
     _center(f"ノルマ  {S.format_mmss(stage.norma_s)}  ({S.NORMA_KMH:.0f} km/h)",
-            fonts["mid"], 540, (180, 220, 255))
+            fonts["mid"], 580, (180, 220, 255))
     _center("クリックでスタート", fonts["mid"], 800, (220, 220, 220))
 
 
@@ -340,6 +356,9 @@ def run() -> None:
                 break
 
             # --- レース本体 ---
+            # ステージの勾配を SpeedSource に流し込む（飽和速度計算 + FE-C 負荷制御）。
+            # ステージ中はずっと同じ勾配で走る（到着駅の値）
+            speed_source.set_gradient(stage.gradient_pct)
             race = Race(assets, speed_source, stage=stage, recorder=recorder)
             stage_finished = False
             while not stage_finished:
