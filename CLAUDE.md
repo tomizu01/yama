@@ -15,7 +15,8 @@
 ```
 
 - 起動するとセットアップ画面:「BLEデバイスを検索」または「デモ走行(30km/h固定)」
-- ステージ開始画面→レース→クリア画面 を30駅分ループ。最終駅のクリア画面で終了
+- セットアップ後に路線選択画面（`lines/*.csv` から選択）
+- ステージ開始画面→レース→クリア画面 を全駅分ループ。最終駅のクリア画面で終了
 - 操作: マウスX座標で左右移動のみ（ポインタが自機より左なら左へ、右なら右へ）
 - 各画面の遷移はマウスクリック。クリア画面で「GPXを記録する」ボタンを押すと
   `activities/YYYYMMDD_hhmmss.gpx` に Strava 等にアップ可能なログを保存
@@ -64,7 +65,7 @@ game/
   projection.py         疑似3D投影 (z,u) → 画面座標。u: 道路中心=0, 道路端=±1
   assets.py             画像読込 + 藁のスケールキャッシュ
   speed_source.py       SpeedSource 抽象 / ConstantSpeedSource(デモ) / BleSpeedSource(3モード+慣性)
-  menu.py               起動時セットアップ画面（スキャン→デバイス選択→モード選択）
+  menu.py               起動時セットアップ画面（スキャン→デバイス選択→モード選択→FE-C選択）+ 路線選択画面
   player.py             自転車（左右移動・漕ぎアニメ・描画）
   obstacles.py          藁の生成・遠近描画・衝突判定
   race.py               Race クラス（update/draw 分離）+ ステージ進行ループ run()
@@ -80,13 +81,15 @@ tools/
   screenshot_test.py    ヘッドレスで数秒シミュレートしてスクショ保存（描画検証用）
   perf_test.py          フレーム時間計測（Race の update+draw のみ、display抜き）
   gradient_test.py      勾配/FE-C の検証（CSV読込・Page51エンコード・HUD描画）
+  line_select_test.py   路線選択の検証（一覧・両CSV・バリデーション・画面描画）
 docs/
   YamanoteDaibouken.md  企画書
   ble-csc-profile.md    BLE: Cycling Speed and Cadence 仕様
   ble-cps-profile.md    BLE: Cycling Power 仕様
   tacx-fec-over-ble.md  BLE: FE-C over BLE 仕様（トレーナー制御・双方向）
 lines/
-  yamanote.csv          山手線駅: 駅名,緯度,経度,勾配[%]（末尾に東京駅を再掲し周回を閉じる）
+  yamanote.csv          山手線: 駅名,緯度,経度,勾配[%]（末尾に東京駅を再掲し周回を閉じる）
+  keihin_tohoku.csv     京浜東北線: 大宮→大船 46ステージ（直線路線、周回なし）
 activities/             走行ログ（GPX）の出力先。gitignore（ユーザー生成物）
 sozai/images/           bg.png(1504x1034) / chari.png・chari2.png(128x128, 漕ぎアニメ2コマ) / wara.png(96x96)
 ```
@@ -162,6 +165,21 @@ sozai/images/           bg.png(1504x1034) / chari.png・chari2.png(128x128, 漕�
   CRR = 0.004（アスファルト）。docs/tacx-fec-over-ble.md の例と照合済み（tools/gradient_test.py）
 - **HUD**: レース中に `GRADE +5.0 %` 行（登り=橙、下り=水色）。ステージ開始画面にも勾配表示
 - **ノルマ時間**: 勾配は未考慮（25km/h 固定のまま）。実走してから調整する方針
+
+## 路線追加メモ（2026-06-04）
+
+- **路線選択画面**: セットアップ後・ステージ開始前に `menu.run_line_select()` を表示。
+  `stages.available_lines()` が `lines/*.csv` を列挙し、表示名は
+  `stages.LINE_DISPLAY_NAMES`（dict の順序 = 画面の並び順）。未登録 CSV はファイル名で
+  末尾に出る。サブラベルに 起点→終点 / ステージ数 / 総距離 を表示
+- **路線の追加方法**: `lines/<key>.csv`（駅名,緯度,経度,勾配[%]）を置き、
+  `LINE_DISPLAY_NAMES` に表示名を1行足すだけ。周回路線は末尾に1駅目を再掲、
+  直線路線はそのまま（連続ペア enumerate なので両対応）
+- **勾配バリデーション**: |勾配| > 30% は `load_stations` が ValueError
+  （緯度経度の重複カラム混入などのデータミス検出。実際に京浜東北線の初版CSVで
+  「駅名,緯度,経度,緯度,経度,勾配」の6列混入があり、これを機に追加）。
+  読込エラーの路線は選択画面でグレーアウト＋エラー表示され、ゲームは落ちない
+- **GPX**: `TrackRecorder(line_name=選択路線名)` で記録される
 
 ## フェーズ3 ステージ実装メモ
 

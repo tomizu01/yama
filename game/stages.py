@@ -29,6 +29,24 @@ M_PER_DEG_LON = 91_000.0   # 東京緯度の概算
 
 NORMA_KMH = 25.0
 
+# CSV ファイル名（拡張子なし）→ 画面に出す路線名。
+# この辞書の順序が路線選択画面の並び順になる（未登録の CSV は末尾、key 名で表示）
+LINE_DISPLAY_NAMES = {
+    "yamanote": "山手線",
+    "keihin_tohoku": "京浜東北線",
+}
+
+# 勾配としてあり得ない値はデータミスとして弾く（緯度経度の重複カラム等の混入検出）
+_MAX_ABS_GRADIENT = 30.0
+
+
+@dataclass(frozen=True)
+class Line:
+    """選択可能な路線（lines/ ディレクトリの CSV 1つに対応）。"""
+    key: str        # ファイル名（拡張子なし）
+    name: str       # 表示名（日本語）
+    csv_path: str
+
 
 @dataclass(frozen=True)
 class Station:
@@ -66,6 +84,12 @@ def load_stations(csv_path: str) -> list[Station]:
                 continue
             name, lat_s, lon_s = row[0], row[1], row[2]
             grad = float(row[3]) if len(row) >= 4 and row[3].strip() else 0.0
+            if abs(grad) > _MAX_ABS_GRADIENT:
+                raise ValueError(
+                    f"{os.path.basename(csv_path)} の駅「{name.strip()}」の勾配が "
+                    f"{grad} % です。カラムは 駅名,緯度,経度,勾配[%] の4列に"
+                    "なっているか確認してください（緯度経度の重複カラム混入の疑い）"
+                )
             stations.append(Station(
                 name=name.strip(), lat=float(lat_s), lon=float(lon_s),
                 gradient_pct=grad,
@@ -96,10 +120,33 @@ def build_stages(stations: list[Station]) -> list[Stage]:
     return out
 
 
-def default_csv_path() -> str:
-    """リポジトリ直下の lines/yamanote.csv を返す。"""
+def lines_dir() -> str:
+    """リポジトリ直下の lines/ ディレクトリを返す。"""
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(os.path.dirname(here), "lines", "yamanote.csv")
+    return os.path.join(os.path.dirname(here), "lines")
+
+
+def available_lines() -> list[Line]:
+    """lines/*.csv を路線一覧として返す。LINE_DISPLAY_NAMES の順 → 未登録は名前順。"""
+    known_order = list(LINE_DISPLAY_NAMES)
+    found: list[Line] = []
+    for fn in sorted(os.listdir(lines_dir())):
+        if not fn.lower().endswith(".csv"):
+            continue
+        key = os.path.splitext(fn)[0]
+        found.append(Line(
+            key=key,
+            name=LINE_DISPLAY_NAMES.get(key, key),
+            csv_path=os.path.join(lines_dir(), fn),
+        ))
+    found.sort(key=lambda l: (known_order.index(l.key)
+                              if l.key in known_order else len(known_order)))
+    return found
+
+
+def default_csv_path() -> str:
+    """リポジトリ直下の lines/yamanote.csv を返す（開発ツール用）。"""
+    return os.path.join(lines_dir(), "yamanote.csv")
 
 
 def format_mmss(seconds: float) -> str:

@@ -18,6 +18,7 @@ import pygame
 
 from game import config as C
 from game import display as D
+from game import stages as S
 from game.ble import BleBridge, BridgeEvent, DeviceCandidate, DeviceProfile
 from game.speed_source import (
     BleSpeedSource,
@@ -364,3 +365,75 @@ def _handle_bridge_event(
     if ev.kind == "scan_result":
         d: DeviceCandidate = ev.payload
         devices[d.address] = d
+
+
+def run_line_select(
+    screen: pygame.Surface,
+    clock: pygame.time.Clock,
+    speed_source: SpeedSource,
+) -> S.Line | None:
+    """路線選択画面。デバイスセットアップの後に挟む。
+
+    speed_source.update() を回し続ける（BLE のテレメトリ受信・切断検出を
+    途切れさせないため）。
+
+    Returns: 選択された Line / None=ユーザーが終了を選んだ
+    """
+    jp_fonts = "yugothicui,yugothic,meiryo,msgothic,consolas"
+    title_font = pygame.font.SysFont(jp_fonts, 56, bold=True)
+    item_font = pygame.font.SysFont(jp_fonts, 32, bold=True)
+    sub_font = pygame.font.SysFont(jp_fonts, 22)
+    hint_font = pygame.font.SysFont(jp_fonts, 20)
+
+    # 各路線のステージ数・総距離をサブラベルに出す（CSV不正はここで除外して表示）
+    items: list[_MenuItem] = []
+    for line in S.available_lines():
+        try:
+            line_stages = S.build_stages(S.load_stations(line.csv_path))
+            total_km = sum(st.distance_m for st in line_stages) / 1000.0
+            sub = (f"{line_stages[0].start.name} → {line_stages[-1].goal.name}"
+                   f"  /  {len(line_stages)} ステージ  /  約 {total_km:.1f} km")
+            items.append(_MenuItem(line.name, payload=line, sublabel=sub))
+        except Exception as e:
+            log.warning("line csv load failed: %s (%s)", line.csv_path, e)
+            items.append(_MenuItem(
+                line.name, enabled=False, sublabel=f"読み込みエラー: {e}"))
+
+    while True:
+        dt = clock.tick(C.FPS) / 1000.0
+        speed_source.update(dt)
+
+        mouse_pos = D.mouse_pos()
+        click_consumed = False
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return None
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                click_consumed = True
+
+        # --- 描画（run_setup と同じ見た目） ---
+        screen.fill((10, 14, 22))
+        screen.blit(title_font.render("路線Rider", True, (255, 200, 80)), (60, 60))
+        screen.blit(item_font.render("路線を選択", True, (200, 220, 255)), (60, 150))
+        rects: list[pygame.Rect] = []
+        y = 260
+        for item in items:
+            row_rect = pygame.Rect(60, y, C.SCREEN_W - 120, 60)
+            if item.enabled and row_rect.collidepoint(mouse_pos):
+                pygame.draw.rect(screen, (40, 70, 110), row_rect, border_radius=8)
+            screen.blit(item.render(item_font), (80, y + 8))
+            if item.sublabel:
+                screen.blit(sub_font.render(item.sublabel, True, (150, 170, 190)),
+                            (80, y + 36))
+            rects.append(row_rect)
+            y += 72
+        screen.blit(hint_font.render("マウスで選択 / ESC で終了", True, (150, 150, 150)),
+                    (60, C.SCREEN_H - 50))
+        D.present()
+
+        if click_consumed:
+            for rect, item in zip(rects, items):
+                if item.enabled and rect.collidepoint(mouse_pos):
+                    return item.payload  # type: ignore[return-value]

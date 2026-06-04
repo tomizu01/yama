@@ -9,7 +9,7 @@ from game import config as C
 from game import display as D
 from game import stages as S
 from game.assets import Assets
-from game.menu import run_setup
+from game.menu import run_line_select, run_setup
 from game.obstacles import ObstacleField
 from game.player import Player
 from game.recorder import TrackRecorder, default_activities_dir
@@ -337,15 +337,19 @@ def run() -> None:
     assets = Assets()
     fonts = _make_fonts()
 
-    # フェーズ3: ステージ一覧
-    stations = S.load_stations(S.default_csv_path())
-    stages_list = S.build_stages(stations)
-
-    # フェーズ3+: セッション全体のGPX記録
-    recorder = TrackRecorder(line_name="山手線")
-
     quit_game = False
     try:
+        # フェーズ4+: 路線選択（lines/*.csv から選ぶ）
+        line = run_line_select(screen, clock, speed_source)
+        if line is None:
+            return  # finally でクリーンアップされる
+
+        stations = S.load_stations(line.csv_path)
+        stages_list = S.build_stages(stations)
+
+        # フェーズ3+: セッション全体のGPX記録
+        recorder = TrackRecorder(line_name=line.name)
+
         for stage in stages_list:
             # --- ステージ開始画面 ---
             if not _wait_click_or_quit(
