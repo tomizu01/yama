@@ -29,11 +29,20 @@ M_PER_DEG_LON = 91_000.0   # 東京緯度の概算
 
 NORMA_KMH = 25.0
 
+# 勾配によるノルマ時間の補正（2026-06-05 ユーザー指定）:
+#   勾配 +1% につき ノルマ時間 +10%（最大 +200% = 3倍）
+#   勾配 -1% につき ノルマ時間 -10%（最大 -50% = 半分）
+NORMA_GRADIENT_PER_PCT = 0.10
+NORMA_GRADIENT_FACTOR_MAX = 3.0
+NORMA_GRADIENT_FACTOR_MIN = 0.5
+
 # CSV ファイル名（拡張子なし）→ 画面に出す路線名。
 # この辞書の順序が路線選択画面の並び順になる（未登録の CSV は末尾、key 名で表示）
 LINE_DISPLAY_NAMES = {
     "yamanote": "山手線",
     "keihin_tohoku": "京浜東北線",
+    "keihin_tohoku_north": "京浜東北線（北）",
+    "keihin_tohoku_south": "京浜東北線（南）",
 }
 
 # 勾配としてあり得ない値はデータミスとして弾く（緯度経度の重複カラム等の混入検出）
@@ -97,6 +106,12 @@ def load_stations(csv_path: str) -> list[Station]:
     return stations
 
 
+def norma_gradient_factor(gradient_pct: float) -> float:
+    """勾配 [%] → ノルマ時間に掛ける倍率（0.5〜3.0 にクランプ）。"""
+    f = 1.0 + gradient_pct * NORMA_GRADIENT_PER_PCT
+    return max(NORMA_GRADIENT_FACTOR_MIN, min(NORMA_GRADIENT_FACTOR_MAX, f))
+
+
 def approx_distance_m(a: Station, b: Station) -> float:
     """簡易距離（緯度1度≒111km、経度1度≒91km）。"""
     dy = (b.lat - a.lat) * M_PER_DEG_LAT
@@ -115,7 +130,8 @@ def build_stages(stations: list[Station]) -> list[Stage]:
             index=i, total=total,
             start=a, goal=b,
             distance_m=d,
-            norma_s=d / (NORMA_KMH / 3.6),   # NORMA_KMH を m/s に変換して割る
+            # NORMA_KMH を m/s に変換して割り、勾配（到着駅の値）で時間を補正
+            norma_s=d / (NORMA_KMH / 3.6) * norma_gradient_factor(b.gradient_pct),
         ))
     return out
 

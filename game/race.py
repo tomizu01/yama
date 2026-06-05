@@ -217,7 +217,9 @@ def _draw_stage_start(
     g = stage.gradient_pct
     grade_color = (255, 160, 120) if g > 0 else (140, 220, 255) if g < 0 else (220, 220, 220)
     _center(f"勾配  {g:+.1f} %", fonts["mid"], 525, grade_color)
-    _center(f"ノルマ  {S.format_mmss(stage.norma_s)}  ({S.NORMA_KMH:.0f} km/h)",
+    # 勾配補正後の実効ペースを表示（基準 NORMA_KMH ÷ 勾配倍率）
+    eff_kmh = S.NORMA_KMH / S.norma_gradient_factor(g)
+    _center(f"ノルマ  {S.format_mmss(stage.norma_s)}  ({eff_kmh:.0f} km/h)",
             fonts["mid"], 580, (180, 220, 255))
     _center("クリックでスタート", fonts["mid"], 800, (220, 220, 220))
 
